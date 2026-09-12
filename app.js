@@ -16,6 +16,13 @@ import {
   query,
   orderBy
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 
 // Firebase 설정
 const firebaseConfig = {
@@ -28,9 +35,72 @@ const firebaseConfig = {
   measurementId: "G-NK5J21HQ0C"
 };
 
-// Firebase 및 Firestore 초기화
+// Firebase 및 Firestore, Auth 초기화
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
+
+// 현재 로그인한 사용자 정보 (로그아웃 상태면 null)
+let currentUser = null;
+
+
+// ===================================================
+// 사용자 인증 (Google 로그인 / 로그아웃)
+// ===================================================
+
+// Google 계정으로 로그인하기
+async function loginWithGoogle() {
+  try {
+    const provider = new GoogleAuthProvider();
+    await signInWithPopup(auth, provider);
+  } catch (error) {
+    console.error("로그인 실패:", error);
+    alert("로그인에 실패했습니다: " + error.message);
+  }
+}
+
+// 로그아웃하기
+async function logout() {
+  try {
+    await signOut(auth);
+  } catch (error) {
+    console.error("로그아웃 실패:", error);
+    alert("로그아웃에 실패했습니다.");
+  }
+}
+
+// 로그인 영역(userArea) 화면 그리기
+function renderUserArea() {
+  const userArea = document.getElementById("userArea");
+  if (!userArea) return;
+
+  userArea.innerHTML = "";
+
+  if (currentUser) {
+    // 로그인된 상태: 사용자 환영 메시지와 로그아웃 버튼 표시
+    const welcome = document.createElement("span");
+    welcome.textContent = `${currentUser.displayName || "선생님"}님 환영합니다!`;
+    userArea.appendChild(welcome);
+
+    const logoutBtn = document.createElement("button");
+    logoutBtn.textContent = "로그아웃";
+    logoutBtn.addEventListener("click", logout);
+    userArea.appendChild(logoutBtn);
+  } else {
+    // 로그인되지 않은 상태: Google 로그인 버튼 표시
+    const loginBtn = document.createElement("button");
+    loginBtn.textContent = "Google 계정으로 로그인";
+    loginBtn.addEventListener("click", loginWithGoogle);
+    userArea.appendChild(loginBtn);
+  }
+}
+
+// 로그인 상태 변경 감시 (로그인하거나 로그아웃할 때 자동으로 실행됩니다)
+onAuthStateChanged(auth, function (user) {
+  currentUser = user;
+  renderUserArea();
+  render(); // 로그인 상태에 따라 내가 쓴 메모의 삭제(×) 버튼 표시를 갱신합니다.
+});
 
 
 // ===================================================
@@ -57,12 +127,18 @@ async function loadMemos() {
 }
 
 // 메모를 새로 씁니다 (Firestore 'memos' 컬렉션에 추가)
-// 백엔드 2: 여기에 "누가 썼는지"(uid)를 함께 저장하게 됩니다.
+// 백엔드 2: 여기에 "누가 썼는지"(uid)를 함께 저장합니다.
 async function addMemo(text) {
+  if (!currentUser) {
+    alert("로그인한 사용자만 메모를 작성할 수 있습니다.");
+    return;
+  }
+
   try {
     await addDoc(collection(db, "memos"), {
       text: text,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      uid: currentUser.uid // 작성자의 고유 식별자(UID) 저장
     });
   } catch (error) {
     console.error("메모 추가 실패:", error);
@@ -101,13 +177,19 @@ function makeMemo(memo) {
   const div = document.createElement("div");
   div.className = "memo";
 
-  const del = document.createElement("button");
-  del.textContent = "×";
-  del.addEventListener("click", async function () {
-    await deleteMemo(memo.id);
-    await render();
-  });
-  div.appendChild(del);
+  // 본인이 작성한 메모이거나, 로그인 도입 전 작성되어 uid가 없는 메모인 경우에만 삭제 버튼을 보여줍니다.
+  const isMyMemo = currentUser && memo.uid === currentUser.uid;
+  const isLegacyMemo = !memo.uid;
+
+  if (isMyMemo || isLegacyMemo) {
+    const del = document.createElement("button");
+    del.textContent = "×";
+    del.addEventListener("click", async function () {
+      await deleteMemo(memo.id);
+      await render();
+    });
+    div.appendChild(del);
+  }
 
   const span = document.createElement("span");
   span.textContent = memo.text;
@@ -128,6 +210,11 @@ input.addEventListener("keydown", async function (e) {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
 
+    if (!currentUser) {
+      alert("로그인 후 메모를 작성해 주세요.");
+      return;
+    }
+
     const text = input.value.trim();
     if (text === "") return;
 
@@ -139,5 +226,6 @@ input.addEventListener("keydown", async function (e) {
 
 
 // 첫 화면 그리기
+renderUserArea();
 render();
 input.focus();
